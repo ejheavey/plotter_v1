@@ -1,0 +1,285 @@
+///* This program is set up to capture real-time images containing a desired object. The object is detected, and the image is filtered to only show the particular
+//object we want to see (i.e. a ball, or a pen). Using the filtered image, a single point is tracked, and the position of the point is stored in an array. Using
+//the collected data, the x- and y-coordinates are plotted in new window and the program returns a prediction of a shape*/
+//
+#include <opencv\cv.h>
+#include<opencv2/core/core.hpp>
+#include<opencv2/highgui/highgui.hpp>
+#include<opencv2/imgproc/imgproc.hpp>
+#include<opencv2/objdetect.hpp>
+#include<iostream>
+#include <math.h>
+#include <sstream>
+#include <stdint.h>
+#include <string>
+
+using namespace cv;
+using namespace std;
+//
+/////////////////////////////////////////
+//
+//
+//Define an object class to assign functions and aspects we want, i.e. x- and y-coordinates and min/max parameter (HSV) values
+
+class Object {
+
+public:
+
+	vector<Point> contour;
+	Rect boundingRect;
+	Point center;
+	double dblDiagSize;
+	double dblAspectRatio;
+
+	Object();
+	~Object(void);
+	Object(string name);
+	Object(vector<Point> _contour);
+	int getXpos();
+	void setXpos(int x);
+	int getYpos();
+	void setYpos(int y);
+
+
+	string getType() { return type; }
+	void setType(string t) { type = t; }
+
+	Scalar getColor() { return Color; }
+
+	void setColor(Scalar c) { Color = c; }
+
+private:
+	int Xpos, Ypos;
+	string type;
+	Scalar Color;
+};
+
+////////////////////////////////////////
+///////////////////////////////////////
+Object::Object(vector<Point> _contour) {
+	contour = _contour;
+	boundingRect = cv::boundingRect(contour);
+	center.x = (boundingRect.x + boundingRect.x + boundingRect.width) / 2;
+	center.y = (boundingRect.y + boundingRect.y + boundingRect.height) / 2;
+	dblDiagSize = sqrt(pow(boundingRect.width, 2) + pow(boundingRect.height, 2));
+	dblAspectRatio = (float)boundingRect.width / (float)boundingRect.height;
+}
+
+Object::Object() {
+	setType("Object");
+	setColor(Scalar(0, 0, 0));
+}
+
+Object::Object(string name) {
+	setType(name);
+
+}
+
+Object::~Object(void) {
+
+}
+
+///////////////////////////////////////
+///////////////////////////////////////
+
+int Object::getXpos() { return Object::Xpos; }
+void Object::setXpos(int x) { Object::Xpos = x; }
+
+int Object::getYpos() { return Object::Ypos; }
+void Object::setYpos(int y) { Object::Ypos = y; }
+
+////////////////////////////////////////
+//// Declaration of all global variables
+
+VideoCapture myStream; // Opens camera
+Mat frame1, frame2; // initial frame (unfiltered)
+Mat gray1, gray2, thresh1, thresh2; // second window showing a filtered frame
+Mat diffImg, threshImg; // difference between images
+vector<Vec3f> circles;
+vector<Object> objects;
+vector<vector<Point>> contours;
+vector<Vec4i> hierarchy;
+int frameWidth, frameHeight, frameDepth; // image dimensions
+int SensitivityVal = 15;
+bool trackingEnabled = true, debugMode = true, pause = false;
+bool objectFound;
+
+//// Declaration of subroutines
+
+void initial(void); // subRoutine_0(); Check if the camera is open/on
+int framesAvailable(void); // subRoutine_1(); Make sure there is a frame available for analysis
+void filterFrames(Mat img1, Mat img2); // subRoutine_2(); Filter the frame accordingly
+string intToString(int num);
+void detectObj();
+
+						   //*Begin main function */
+int main(int argc, const char** argv)
+{
+	/* subRoutine_0() */ initial();
+
+	// Run this continuously
+	while (1) { // Begin endless loop...
+
+		/* subRoutine_1() */ framesAvailable();
+		/* This subroutine is simply in place to determine whether or not the camera
+		is taking images. If a frame is available, subRoutine_2() gets called to filter the image.*/
+		
+		/* subRoutine_2() */ filterFrames(frame1, frame2);
+		
+		/* subRoutine_3() */ /*detectObj();*/
+							 /* The point is to determine whether or not something of interest is in the
+							 frame. If an object of interest is detected, the edges of the object are
+							 determined and all pixels that are not bounded within the object go to 0;
+							 a new window is opened showing the detected object with a black background.
+							 */
+		
+		switch (waitKey(10)) {
+		case 27:
+			return 0;
+		case 116:
+			trackingEnabled = !trackingEnabled;
+			if (trackingEnabled == false) { 
+				cout << "Tracking disabled.\n" << endl;
+				destroyAllWindows();
+			}
+			else { 
+				cout << "Tracking enabled.\n" << endl;
+				destroyAllWindows();
+			}
+			break;
+		case 100:
+			debugMode = !debugMode;
+			if (debugMode == false) { 
+				cout << "Debug mode disabled.\n" << endl;
+				destroyAllWindows();
+			}
+			else { 
+				cout << "Debug mode enabled.\n" << endl;
+				destroyAllWindows();
+				}
+			break;
+		case 112:
+			pause = !pause;
+			if (pause == true) {
+				while (pause == true) {
+					switch (waitKey()) {
+					case 112:
+						pause = false;
+						break;
+					}
+				}
+			}
+		} // end switch block
+		if (debugMode == true && trackingEnabled == true) {
+			detectObj();
+			/*imshow("Grayscale Image", gray2);
+			imshow("Difference Image", diffImg);
+			imshow("Threshold Image", threshImg);*/
+		}
+		else if (debugMode == false && trackingEnabled == true) {
+			detectObj();
+			imshow("Grayscale Image", gray2);
+		}
+		else if (trackingEnabled == false) {
+			imshow("Grayscale Image", gray2);
+		}
+	
+	} // close endless while loop
+
+	// After the loop is broken, some data manipulation and statistical analysis will take place. This is where the machine learning takes precedence. 
+	return 0;
+} //* End main function */
+
+////////////////////////////////////////////
+//
+//
+////////////////////////////////////////////
+//* Subroutine definitions*/
+
+string intToString(int num) {
+	std::stringstream ss;
+	ss << num;
+	return ss.str();
+}
+
+/////////////////////////////////////////////
+
+void initial(void) { // subRoutine_0()
+	myStream.open(1);
+
+	if (!myStream.isOpened()) { // Check that the webcam is available for streaming video
+		cout << "Error opening the webcam" << endl;
+		cin.get();
+	}
+	else { // If the camera is open, output the frame rate
+		double fps = myStream.get(CAP_PROP_FPS); //get capture object frame rate property value and display it
+		cout << "Frames per second: " << fps << endl;
+	} cin.get();
+}
+
+////////////////////////////////////////////
+
+int framesAvailable(void) { // subRoutine_1()
+	bool availableFrame = myStream.read(frame1);
+
+	if (!availableFrame) {
+		cout << "No available frames" << endl;
+		cin.get();
+	}
+	else {
+		frameWidth = frame1.cols;
+		frameHeight = frame1.rows;
+		frameDepth = frame1.channels();
+		myStream.read(frame2);
+	}
+	return 0;
+}
+
+
+
+///////////////////////////////////////////
+
+void filterFrames(Mat img1, Mat img2) { // subRoutine_2()
+	 cvtColor(img1, gray1, COLOR_BGR2GRAY);
+	 cvtColor(img2, gray2, COLOR_BGR2GRAY);
+	 GaussianBlur(gray1, gray1, Size(5, 5), 1, 1);
+	 GaussianBlur(gray2, gray2, Size(5, 5), 1, 1);
+	 threshold(gray1, thresh1, 50, 255, 1);
+	 threshold(gray2, thresh2, 50, 255, 1);
+	 absdiff(gray1,gray2,diffImg);
+	 threshold(diffImg, threshImg, SensitivityVal, 255, THRESH_BINARY);
+	 threshold(threshImg, threshImg, SensitivityVal, 255, THRESH_BINARY);
+	cv::Mat structuringElement5x5 = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+	cv::dilate(threshImg, threshImg, structuringElement5x5);
+	cv::erode(threshImg, threshImg, structuringElement5x5);
+	cv::dilate(threshImg, threshImg, structuringElement5x5);
+
+}
+
+
+//////////////////////////////////////////////
+
+void detectObj() {
+	Mat imgThreshCopy = threshImg.clone();
+	findContours(imgThreshCopy, contours, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE);
+	Mat imgContours(imgThreshCopy.size(), CV_8UC1);
+	vector<vector<Point>> convexHulls(contours.size());
+	
+	for (unsigned int i = 0; i < contours.size(); i++) {
+		cv::convexHull(contours[i], convexHulls[i]);
+	}
+
+	Mat imgConvexHulls(frameHeight,frameWidth, CV_8UC1);
+
+	
+	drawContours(imgConvexHulls, convexHulls, -1, Scalar(255, 255, 255), 3);
+
+	imshow("Image Convex Hulls", imgConvexHulls);
+	//convexHulls.clear();
+}
+
+
+
+
+
+
